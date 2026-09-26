@@ -1,0 +1,10 @@
+.venv/
+__pycache__/
+prepared*/
+raw_videos/
+*.mp4
+*.avi
+*.mov
+*.mkv
+*.ts
+*.m4v
