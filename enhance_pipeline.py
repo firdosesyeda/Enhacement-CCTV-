@@ -86,7 +86,7 @@ def blur_score(gray):
     return float(cv2.Laplacian(gray, cv2.CV_64F).var())
 
 
-def process_video(source, relative_path, frames_root, rows, args):
+def process_video(source, relative_path, frames_root, rows, args, enhanced_video_path=None):
     cap = cv2.VideoCapture(str(source))
     if not cap.isOpened():
         print(f"  Cannot open, skipping: {source}")
@@ -104,6 +104,18 @@ def process_video(source, relative_path, frames_root, rows, args):
     enhanced_dir = frames_root / "enhanced" / rel_stem
     original_dir.mkdir(parents=True, exist_ok=True)
     enhanced_dir.mkdir(parents=True, exist_ok=True)
+    video_writer = None
+    if enhanced_video_path is not None:
+        output_width = args.width or int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
+        output_height = args.height or int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+        enhanced_video_path.parent.mkdir(parents=True, exist_ok=True)
+        video_writer = cv2.VideoWriter(
+            str(enhanced_video_path), cv2.VideoWriter_fourcc(*"mp4v"),
+            fps, (output_width, output_height),
+        )
+        if not video_writer.isOpened():
+            cap.release()
+            raise RuntimeError(f"Could not create enhanced video: {enhanced_video_path}")
     frame_index = sample_index = kept = filtered = sampled = 0
 
     while True:
@@ -111,15 +123,18 @@ def process_video(source, relative_path, frames_root, rows, args):
         if not ok:
             break
         target_index = round(sample_index * args.every_n_seconds * fps)
-        if frame_index >= target_index:
+        selected = frame_index >= target_index
+        enhanced = None
+        if video_writer is not None or selected:
+            enhanced = enhance_frame(frame, args.denoise_strength, not args.no_clahe)
+            enhanced = fit_inside(enhanced, args.width, args.height)
+        if video_writer is not None:
+            video_writer.write(enhanced)
+        if selected:
             sample_index += 1
             sampled += 1
             seconds = frame_index / fps
             original = fit_inside(frame, args.width, args.height)
-            enhanced = fit_inside(
-                enhance_frame(frame, args.denoise_strength, not args.no_clahe),
-                args.width, args.height,
-            )
             gray = cv2.cvtColor(enhanced, cv2.COLOR_BGR2GRAY)
             sharpness = blur_score(gray)
             brightness = float(np.mean(gray))
@@ -152,6 +167,8 @@ def process_video(source, relative_path, frames_root, rows, args):
             ])
         frame_index += 1
     cap.release()
+    if video_writer is not None:
+        video_writer.release()
     print(f"  {sampled} sampled; {kept} original/enhanced pairs saved; {filtered} filtered")
     return kept, filtered
 
@@ -162,7 +179,8 @@ def main():
     parser.add_argument("--output", required=True, help="Destination for images and logs")
     parser.add_argument("--every-n-seconds", type=float, default=1.0, help="Sample interval; default one frame per second")
     parser.add_argument("--smooth-video-fps", type=float, default=0.0, help="Optional interpolated playback copy; 0 disables it")
-    parser.add_argument("--denoise-strength", type=int, default=3, help="Gentle denoising strength; 0 disables it")
+    parser.add_argument("--create-enhanced-video", action="store_true", help="Write a full-length enhanced MP4 at the source FPS")
+    parser.add_argument("--denoise-strength", type=int, default=0, help="Optional, slow non-local-means denoising strength; 0 disables it")
     parser.add_argument("--no-clahe", action="store_true", help="Skip local contrast enhancement")
     parser.add_argument("--width", type=int, default=0, help="Optional output canvas width; 0 keeps source size")
     parser.add_argument("--height", type=int, default=0, help="Optional output canvas height; 0 keeps source size")
@@ -200,6 +218,7 @@ def main():
 
     frames_root = output_dir / "frames"
     videos_root = output_dir / "smooth_videos"
+    enhanced_videos_root = output_dir / "enhanced_videos"
     frames_root.mkdir(parents=True, exist_ok=True)
     rows, total_kept, total_filtered = [], 0, 0
     print(f"Found {len(videos)} video(s); sampling real frames.\n")
@@ -211,7 +230,14 @@ def main():
             print(f"  Creating optional {args.smooth_video_fps:g} FPS interpolated viewing copy...")
             if not make_smooth_video(source, dest, args.smooth_video_fps):
                 rows.append([str(relative), "", "ERROR", "", str(dest), "Smooth video creation failed"])
-        kept, filtered = process_video(source, relative, frames_root, rows, args)
+        enhanced_video_path = None
+        if args.create_enhanced_video:
+            enhanced_video_path = enhanced_videos_root / relative.with_name(
+                f"{relative.stem}_enhanced.mp4"
+            )
+        kept, filtered = process_video(
+            source, relative, frames_root, rows, args, enhanced_video_path
+        )
         total_kept += kept
         total_filtered += filtered
 

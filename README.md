@@ -1,6 +1,6 @@
 # CCTV frame preparation for warehouse YOLO projects
 
-The script keeps camera recordings unchanged and prepares sampled images for inspection and labeling. For each sampled real frame, it saves both an original and a gently enhanced version. Enhancement applies light denoising and local contrast adjustment. Compare both versions on your footage; enhancement can help in poor lighting, but can also remove fine detail if too strong.
+The upload app keeps the source recording unchanged, creates a full enhanced video, runs a pretrained YOLO person detector on that enhanced video, and prepares sampled original/enhanced frames for inspection and labeling. The final video shows person boxes and confidence values. Local contrast adjustment is enabled by default. Denoising is optional and off by default because it can take a long time on every frame; compare original and enhanced frames because cleanup can soften small details.
 
 ## Run
 
@@ -18,7 +18,9 @@ Start the upload page from this project folder:
 python -m streamlit run upload_app.py
 ```
 
-Your browser opens a local page. Choose a recording, set how often to sample frames, and click **Process recording**. While it runs, the page shows elapsed time. When processing finishes, it shows the total time and offers a ZIP download containing the original and enhanced frames plus `frame_log.csv`.
+Your browser opens a local page. Choose a recording, set how often to sample frames, choose denoising/contrast options and the minimum detection confidence, then click **Process recording**. The app enhances every video frame first, then runs YOLO on the enhanced video. It shows progress and elapsed time. When processing finishes, download a ZIP containing the enhanced video, person-detection video, sampled frames, and `frame_log.csv`.
+
+The app uses `yolo26n.pt`, a small pretrained Ultralytics model. On first use, Ultralytics downloads its model weights, so an internet connection is needed. YOLO is restricted to its `person` class (COCO class 0). The confidence slider defaults to 0.25; lowering it may find more people but can add false detections. This is pretrained detection, not warehouse-specific fine-tuning.
 
 On Windows with a virtual environment, run these commands from the project folder:
 
@@ -56,13 +58,15 @@ By default the script samples one real frame per second, keeps source resolution
 
 ```text
 prepared/
+  enhanced_videos/camera_01/shift_day_enhanced.mp4
+  person_detection/shift_day_person_detected.mp4
   frames/
     original/camera_01/shift_day/
     enhanced/camera_01/shift_day/
   frame_log.csv
 ```
 
-Originals are in `frames/original/`; enhanced candidates are in `frames/enhanced/`. The CSV records source video, timestamp, both image paths, and review hints for possible blur or unusual brightness. Hints are not automatic proof that an image is unusable; nothing is filtered by default.
+The enhanced video keeps the source FPS and image size. The detection video also keeps that FPS and size, with person boxes drawn on each frame; audio is not copied to the output video. Originals are in `frames/original/`; enhanced candidates are in `frames/enhanced/`. The CSV records source video, timestamp, both image paths, and review hints for possible blur or unusual brightness. Hints are not automatic proof that an image is unusable; nothing is filtered by default.
 
 ## Useful options
 
@@ -72,7 +76,7 @@ Sample fewer frames:
 python enhance_pipeline.py --input ./raw_videos --output ./prepared --every-n-seconds 2
 ```
 
-Reduce denoising if fine details look soft, or disable it:
+Optional denoising is slow on long videos. Keep it at 0 for faster processing, or enable a low level when the recording has visible grain:
 
 ```bash
 python enhance_pipeline.py --input ./raw_videos --output ./prepared --denoise-strength 1
@@ -101,4 +105,4 @@ Keep original size for training unless a fixed input size is needed. Optional wi
 4. Keep all frames from the same video recording in one split. Use separate recordings or cameras for validation so the score reflects performance on new footage.
 5. Check model results per camera and collect examples where it misses objects.
 
-Image cleanup cannot guarantee high accuracy. Camera view, focus, lighting, target size in pixels, clear labels, and a varied dataset matter. This script prepares candidate images; it does not annotate them or train YOLO.
+Image cleanup cannot guarantee high detection accuracy or find every person. Small, distant, blurred, or hidden people may be missed. Camera view, focus, lighting, target size in pixels, representative examples, and accurate labels all affect results. The app uses pretrained YOLO for video detection but does not fine-tune YOLO; use labeled warehouse frames for later fine-tuning.
